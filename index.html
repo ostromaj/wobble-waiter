@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#2a0f14">
 <title>Wobble Waiter</title>
 <meta name="description" content="The chef keeps throwing stuff on your tray. Don't drop it. No ads, no purchases, no chat, no accounts.">
@@ -10,6 +10,7 @@
 :root{--ink:#fff4e2;--muted:#e2c3a8;--accent:#ffcc33;--red:#e8433a;--panel:#2a0f14}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;background:#1a080b;color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent}
+button{touch-action:manipulation}
 canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
 .overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:5;padding:14px}
 .overlay.show{display:flex}
@@ -318,18 +319,50 @@ $('rDone').onclick = () => { goMenu(); toast('Shift over. See you tomorrow! 👋
 $('rShare').onclick = share;
 window.addEventListener('hashchange', () => { readHash(); if (state === 'menu') refreshMenu(); });
 
-// touch/drag: works like a slider; drag right of where you touched to move right.
-// mouse with no button held: distance from the middle of the screen sets the speed.
+// Controls.
+// Phones: touch events (not pointer events), with preventDefault, so the browser never
+// scrolls, zooms or cancels the drag. Drag right of where you touched to move right.
+// Mouse: distance from the middle of the screen sets the speed (click-drag works too).
 function sens(){ return 5.2 / (s0 * (G ? G.cam : 1)); }
-cv.addEventListener('pointerdown', e => { audio(); if (state !== 'play') return; cv.setPointerCapture(e.pointerId); joy = {id:e.pointerId, ox:e.clientX, x:e.clientX}; joyV = 0; });
-cv.addEventListener('pointermove', e => {
+function touchById(list, id){ for (let i = 0; i < list.length; i++) if (list[i].identifier === id) return list[i]; return null; }
+cv.addEventListener('touchstart', e => {
+  e.preventDefault(); audio();
   if (state !== 'play') return;
+  const t = e.changedTouches[0];
+  joy = {id:'t' + t.identifier, tid:t.identifier, ox:t.clientX, x:t.clientX}; joyV = 0;
+}, {passive:false});
+cv.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (state !== 'play' || !joy || joy.tid === undefined) return;
+  const t = touchById(e.touches, joy.tid); if (!t) return;
+  joy.x = t.clientX; joyV = (joy.x - joy.ox) * sens();
+}, {passive:false});
+const endTouch = e => {
+  e.preventDefault();
+  if (!joy || joy.tid === undefined) return;
+  if (touchById(e.changedTouches, joy.tid)){
+    const rest = e.touches[0];
+    if (rest){ joy = {id:'t' + rest.identifier, tid:rest.identifier, ox:rest.clientX, x:rest.clientX}; joyV = 0; }
+    else { joy = null; joyV = 0; }
+  }
+};
+cv.addEventListener('touchend', endTouch, {passive:false});
+cv.addEventListener('touchcancel', endTouch, {passive:false});
+cv.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') return; audio(); if (state !== 'play') return; cv.setPointerCapture(e.pointerId); joy = {id:e.pointerId, ox:e.clientX, x:e.clientX}; joyV = 0; });
+cv.addEventListener('pointermove', e => {
+  if (e.pointerType === 'touch' || state !== 'play') return;
   if (joy && e.pointerId === joy.id){ joy.x = e.clientX; joyV = (joy.x - joy.ox) * sens(); }
   else if (!joy && e.pointerType === 'mouse'){ joyV = (e.clientX - W / 2) / (W / 2) * 650; }
 });
-const endJoy = e => { if (joy && e.pointerId === joy.id){ joy = null; joyV = e.pointerType === 'mouse' ? (e.clientX - W / 2) / (W / 2) * 650 : 0; } };
+const endJoy = e => { if (e.pointerType === 'touch') return; if (joy && e.pointerId === joy.id){ joy = null; joyV = e.pointerType === 'mouse' ? (e.clientX - W / 2) / (W / 2) * 650 : 0; } };
 cv.addEventListener('pointerup', endJoy); cv.addEventListener('pointercancel', endJoy);
 cv.addEventListener('pointerleave', e => { if (!joy && e.pointerType === 'mouse') joyV = 0; });
+// Stop pinch-zoom, double-tap zoom and page bounce (iPhone Safari ignores user-scalable=no).
+['gesturestart', 'gesturechange', 'gestureend'].forEach(n => document.addEventListener(n, e => e.preventDefault(), {passive:false}));
+document.addEventListener('touchmove', e => { if (e.touches.length > 1 || state === 'play') e.preventDefault(); }, {passive:false});
+let lastTouchEnd = 0;
+document.addEventListener('touchend', e => { const now = Date.now(); if (now - lastTouchEnd < 350 && !/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) e.preventDefault(); lastTouchEnd = now; }, {passive:false});
+document.addEventListener('dblclick', e => e.preventDefault(), {passive:false});
 window.addEventListener('keydown', e => {
   if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
   if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A'){ keys.left = true; }
@@ -491,6 +524,12 @@ function render(now){
       const txt = e.ev.e + ' ' + e.ev.n + ' ' + (e.dir < 0 ? '⬅' : '➡');
       g.globalAlpha = warn ? 0.6 + 0.4 * Math.sin(t * 20) * 0.5 + 0.2 : 0.85;
       g.fillStyle = '#3a0f00'; g.fillText(txt, W / 2 + 3, y + 3); g.fillStyle = warn ? '#ffcc33' : '#ff9a3a'; g.fillText(txt, W / 2, y); g.globalAlpha = 1;
+    }
+    if (state === 'play' && joy && joy.tid !== undefined){
+      const y = H - 46, dx = Math.max(-120, Math.min(120, joy.x - joy.ox));
+      g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(joy.ox - 120, y - 4, 240, 8);
+      g.fillStyle = 'rgba(255,244,226,.5)'; g.beginPath(); g.arc(joy.ox, y, 6, 0, 7); g.fill();
+      g.fillStyle = '#ffcc33'; g.beginPath(); g.arc(joy.ox + dx, y, 16, 0, 7); g.fill();
     }
     if (state === 'play' && G.t < 4 && !G.stack.length){ g.font = '800 18px system-ui,sans-serif'; g.textBaseline = 'middle'; g.fillStyle = 'rgba(0,0,0,.55)'; const m = 'Slide left & right to balance the tower'; const mw2 = g.measureText(m).width + 28; g.fillRect(W / 2 - mw2 / 2, H * 0.5 - 20, mw2, 40); g.fillStyle = '#fff4e2'; g.fillText(m, W / 2, H * 0.5); }
     if (G.over && state === 'play'){ g.font = '950 ' + Math.round(Math.min(80, W / 6)) + 'px system-ui,sans-serif'; g.textBaseline = 'middle'; g.save(); g.translate(W / 2, H * 0.42); g.rotate(-0.08); g.fillStyle = '#3a0f00'; g.fillText('CRASH!', 4, 5); g.fillStyle = '#e8433a'; g.fillText('CRASH!', 0, 0); g.restore(); }
